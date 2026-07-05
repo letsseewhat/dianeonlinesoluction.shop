@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Diane Online Solution</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="logo">Diane Online</div>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/pricing.html">Pricing</a></li>
+                <li><a href="/contact.html">Contact</a></li>
+                <li><a href="#" onclick="logout()" class="btn">Logout</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <section style="padding: 3rem 0;">
+        <div class="container">
+            <h1>Your Dashboard</h1>
+            <div style="margin: 2rem 0;">
+                <h2>Welcome, User!</h2>
+                <p>Manage your account and orders from here.</p>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3>📦 Orders</h3>
+                    <p>View and track your orders</p>
+                    <a href="#orders" class="btn" style="margin-top: 1rem;">View Orders</a>
+                </div>
+                <div class="feature-card">
+                    <h3>👤 Profile</h3>
+                    <p>Manage your account settings</p>
+                    <a href="#profile" class="btn" style="margin-top: 1rem;">Edit Profile</a>
+                </div>
+                <div class="feature-card">
+                    <h3>💳 Billing</h3>
+                    <p>View your billing information</p>
+                    <a href="#billing" class="btn" style="margin-top: 1rem;">Billing</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Diane Online Solution. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        function logout() {
+            localStorage.removeItem('userToken');
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>
