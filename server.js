@@ -5,7 +5,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 
 // Load environment variables before configuring Stripe
- dotenv.config();
+dotenv.config();
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
@@ -47,6 +47,46 @@ const products = [
 
 const orders = [];
 
+function findProduct(productId) {
+  return products.find((product) => product.id === productId);
+}
+
+function calculateOrderTotals(items) {
+  let subtotal = 0;
+  const normalizedItems = items.map((item) => {
+    const product = findProduct(item.id || item.productId);
+    if (!product) {
+      throw new Error(`Product not found: ${item.id || item.productId}`);
+    }
+
+    const quantity = Math.max(1, Number(item.quantity || 1));
+    const lineTotal = Number((product.price * quantity).toFixed(2));
+    subtotal += lineTotal;
+
+    return {
+      id: product.id,
+      name: product.name,
+      price: product.price,
+      quantity,
+      lineTotal
+    };
+  });
+
+  const tax = 0;
+  const shipping = 0;
+  const total = Number((subtotal + tax + shipping).toFixed(2));
+
+  return {
+    items: normalizedItems,
+    totals: {
+      subtotal: Number(subtotal.toFixed(2)),
+      tax,
+      shipping,
+      total
+    }
+  };
+}
+
 // Middleware
 app.use(cors());
 app.use('/api/webhook', express.raw({ type: 'application/json' }));
@@ -57,6 +97,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Health Check
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date() });
+});
+
+// Frontend Stripe configuration
+app.get('/api/config', (req, res) => {
+  res.json({
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || ''
+  });
 });
 
 // Homepage
@@ -70,7 +117,7 @@ app.get('/api/products', (req, res) => {
 });
 
 app.get('/api/products/:id', (req, res) => {
-  const product = products.find((item) => item.id === req.params.id);
+  const product = findProduct(req.params.id);
   if (!product) {
     return res.status(404).json({ success: false, message: 'Product not found' });
   }
@@ -79,38 +126,95 @@ app.get('/api/products/:id', (req, res) => {
 
 // Order Endpoint
 app.post('/api/orders', (req, res) => {
-  const { customer, items, totals } = req.body;
+  try {
+    const { customer, items } = req.body;
 
-  if (!customer || !customer.name || !customer.email || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Customer name, email, and at least one cart item are required'
+    if (!customer || !customer.name || !customer.email || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer name, email, and at least one cart item are required'
+      });
+    }
+
+    const calculated = calculateOrderTotals(items);
+
+    const order = {
+      id: `DOS-${Date.now()}`,
+      customer,
+      items: calculated.items,
+      totals: calculated.totals,
+      status: 'pending_payment',
+      createdAt: new Date().toISOString()
+    };
+
+    orders.push(order);
+
+    res.json({
+      success: true,
+      message: 'Order created',
+      order
     });
+  } catch (error) {
+    console.error('Order error:', error);
+    res.status(400).json({ success: false, message: error.message });
   }
-
-  const order = {
-    id: `DOS-${Date.now()}`,
-    customer,
-    items,
-    totals,
-    status: 'pending_payment',
-    createdAt: new Date().toISOString()
-  };
-
-  orders.push(order);
-
-  res.json({
-    success: true,
-    message: 'Order created',
-    order
-  });
 });
 
 app.get('/api/orders', (req, res) => {
   res.json({ success: true, orders });
 });
 
-// Payment Endpoint
+app.get('/api/orders/:id', (req, res) => {
+  const order = orders.find((item) => item.id === req.params.id);
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+  res.json({ success: true, order });
+});
+
+// PaymentIntent endpoint for Stripe Payment Element.
+// Automatic payment methods lets Stripe show cards, Link, wallets, ACH/bank debit,
+// and eligible local payment methods based on your Stripe account settings.
+app.post('/api/create-payment-intent', async (req, res) => {
+  try {
+    const { orderId, customerEmail } = req.body;
+    const order = orders.find((item) => item.id === orderId);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(order.totals.total * 100),
+      currency: 'usd',
+      receipt_email: customerEmail || order.customer.email,
+      automatic_payment_methods: {
+        enabled: true
+      },
+      metadata: {
+        order_id: order.id,
+        customer_email: order.customer.email,
+        source: 'dianeonlinesoluction.shop',
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    order.paymentIntent = paymentIntent.id;
+    order.status = 'awaiting_payment_method';
+
+    res.json({
+      success: true,
+      clientSecret: paymentIntent.client_secret,
+      paymentId: paymentIntent.id,
+      order
+    });
+  } catch (error) {
+    console.error('PaymentIntent error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Backward-compatible Payment Endpoint
 app.post('/api/payment', async (req, res) => {
   try {
     const { amount, orderId, customerEmail } = req.body;
@@ -123,6 +227,9 @@ app.post('/api/payment', async (req, res) => {
       amount: Math.round(Number(amount) * 100),
       currency: 'usd',
       receipt_email: customerEmail || undefined,
+      automatic_payment_methods: {
+        enabled: true
+      },
       metadata: {
         order_id: orderId || 'pending',
         source: 'dianeonlinesoluction.shop',
@@ -172,11 +279,29 @@ app.post('/api/webhook', (req, res) => {
       }
       break;
     }
+    case 'payment_intent.processing': {
+      const intent = event.data.object;
+      const order = orders.find((item) => item.id === intent.metadata.order_id);
+      if (order) {
+        order.status = 'processing';
+        order.paymentIntent = intent.id;
+      }
+      break;
+    }
     case 'payment_intent.payment_failed': {
       const intent = event.data.object;
       const order = orders.find((item) => item.id === intent.metadata.order_id);
       if (order) {
         order.status = 'payment_failed';
+        order.paymentIntent = intent.id;
+      }
+      break;
+    }
+    case 'payment_intent.canceled': {
+      const intent = event.data.object;
+      const order = orders.find((item) => item.id === intent.metadata.order_id);
+      if (order) {
+        order.status = 'canceled';
         order.paymentIntent = intent.id;
       }
       break;
