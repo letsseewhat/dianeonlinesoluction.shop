@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Products | Diane Online Solutions</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container">
+      <a class="logo" href="/">Diane Online Solutions</a>
+      <ul class="nav-links">
+        <li><a href="/products.html">Shop</a></li>
+        <li><a href="/cart.html">Cart (<span data-cart-count>0</span>)</a></li>
+        <li><a href="/checkout.html">Checkout</a></li>
+        <li><a href="/contact.html">Contact</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main class="container page">
+    <header class="page-header">
+      <p class="eyebrow">Online services and digital products</p>
+      <h1>Shop Diane Online Solutions</h1>
+      <p>Business support services and digital resources available through secure Stripe checkout.</p>
+    </header>
+    <section id="product-grid" class="product-grid"></section>
+  </main>
+
+  <footer>
+    <div class="container footer-content">
+      <div><h4>Shop</h4><a href="/products.html">Products</a><a href="/cart.html">Cart</a><a href="/checkout.html">Checkout</a></div>
+      <div><h4>Policies</h4><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a><a href="/refund.html">Refunds</a><a href="/shipping.html">Shipping</a></div>
+      <div><h4>Support</h4><a href="/contact.html">Contact</a><a href="/admin.html">Admin</a></div>
+    </div>
+  </footer>
+  <script src="https://js.stripe.com/v3/"></script>
+  <script src="/assets/app.js"></script>
+</body>
+</html>
