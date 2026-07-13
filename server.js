@@ -7,6 +7,13 @@ const path = require('path');
 // Load environment variables before configuring Stripe
 dotenv.config();
 
+const { PostHog, setupExpressRequestContext, setupExpressErrorHandler } = require('posthog-node');
+
+const posthog = new PostHog(process.env.POSTHOG_API_KEY, {
+  host: process.env.POSTHOG_HOST,
+  enableExceptionAutocapture: true,
+});
+
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
 const app = express();
@@ -94,6 +101,8 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+setupExpressRequestContext(posthog, app);
+
 // Health Check
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date() });
@@ -149,6 +158,19 @@ app.post('/api/orders', (req, res) => {
 
     orders.push(order);
 
+    posthog.capture({
+      distinctId: customer.email,
+      event: 'order_created',
+      properties: {
+        order_id: order.id,
+        item_count: calculated.items.length,
+        subtotal: calculated.totals.subtotal,
+        total: calculated.totals.total,
+        product_ids: calculated.items.map((i) => i.id),
+        $set: { name: customer.name, email: customer.email },
+      },
+    });
+
     res.json({
       success: true,
       message: 'Order created',
@@ -156,6 +178,7 @@ app.post('/api/orders', (req, res) => {
     });
   } catch (error) {
     console.error('Order error:', error);
+    posthog.captureException(error);
     res.status(400).json({ success: false, message: error.message });
   }
 });
@@ -202,6 +225,17 @@ app.post('/api/create-payment-intent', async (req, res) => {
     order.paymentIntent = paymentIntent.id;
     order.status = 'awaiting_payment_method';
 
+    posthog.capture({
+      distinctId: customerEmail || order.customer.email,
+      event: 'payment_intent_created',
+      properties: {
+        order_id: order.id,
+        payment_intent_id: paymentIntent.id,
+        amount: order.totals.total,
+        currency: 'usd',
+      },
+    });
+
     res.json({
       success: true,
       clientSecret: paymentIntent.client_secret,
@@ -210,6 +244,7 @@ app.post('/api/create-payment-intent', async (req, res) => {
     });
   } catch (error) {
     console.error('PaymentIntent error:', error);
+    posthog.captureException(error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -277,6 +312,16 @@ app.post('/api/webhook', (req, res) => {
         order.status = 'paid';
         order.paymentIntent = intent.id;
       }
+      posthog.capture({
+        distinctId: intent.metadata.customer_email || intent.receipt_email || intent.metadata.order_id,
+        event: 'payment_succeeded',
+        properties: {
+          order_id: intent.metadata.order_id,
+          payment_intent_id: intent.id,
+          amount: intent.amount / 100,
+          currency: intent.currency,
+        },
+      });
       break;
     }
     case 'payment_intent.processing': {
@@ -295,6 +340,17 @@ app.post('/api/webhook', (req, res) => {
         order.status = 'payment_failed';
         order.paymentIntent = intent.id;
       }
+      posthog.capture({
+        distinctId: intent.metadata.customer_email || intent.receipt_email || intent.metadata.order_id,
+        event: 'payment_failed',
+        properties: {
+          order_id: intent.metadata.order_id,
+          payment_intent_id: intent.id,
+          amount: intent.amount / 100,
+          currency: intent.currency,
+          failure_message: intent.last_payment_error && intent.last_payment_error.message,
+        },
+      });
       break;
     }
     case 'payment_intent.canceled': {
@@ -304,6 +360,17 @@ app.post('/api/webhook', (req, res) => {
         order.status = 'canceled';
         order.paymentIntent = intent.id;
       }
+      posthog.capture({
+        distinctId: intent.metadata.customer_email || intent.receipt_email || intent.metadata.order_id,
+        event: 'payment_canceled',
+        properties: {
+          order_id: intent.metadata.order_id,
+          payment_intent_id: intent.id,
+          amount: intent.amount / 100,
+          currency: intent.currency,
+          cancellation_reason: intent.cancellation_reason,
+        },
+      });
       break;
     }
     default:
@@ -327,6 +394,24 @@ app.post('/api/signup', (req, res) => {
 
     console.log(`New signup: ${email}`);
 
+    posthog.identify({
+      distinctId: email,
+      properties: {
+        name,
+        email,
+        $set_once: { first_seen: new Date().toISOString() },
+      },
+    });
+
+    posthog.capture({
+      distinctId: email,
+      event: 'user_signed_up',
+      properties: {
+        name,
+        signup_method: 'email',
+      },
+    });
+
     res.json({
       success: true,
       message: 'Account created successfully',
@@ -334,6 +419,7 @@ app.post('/api/signup', (req, res) => {
     });
   } catch (error) {
     console.error('Signup error:', error);
+    posthog.captureException(error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -355,12 +441,22 @@ app.post('/api/contact', (req, res) => {
 
     console.log(`Contact form received from: ${email}`);
 
+    posthog.capture({
+      distinctId: email,
+      event: 'contact_form_submitted',
+      properties: {
+        subject,
+        $set: { name, email },
+      },
+    });
+
     res.json({
       success: true,
       message: 'Message received. We will get back to you soon.'
     });
   } catch (error) {
     console.error('Contact error:', error);
+    posthog.captureException(error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -389,6 +485,8 @@ app.use((req, res) => {
   res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
 });
 
+setupExpressErrorHandler(posthog, app);
+
 // Error Handler
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
@@ -403,4 +501,14 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Stripe configured: ${process.env.STRIPE_SECRET_KEY ? 'Yes' : 'No'}`);
+});
+
+process.on('SIGINT', async () => {
+  await posthog.shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await posthog.shutdown();
+  process.exit(0);
 });
